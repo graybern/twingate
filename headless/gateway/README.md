@@ -41,13 +41,14 @@ Before running the script:
 1. **Download the script:**
 
 ```bash
-curl https://raw.githubusercontent.com/Twingate-Solutions/general-scripts/main/twingate-headless-client-gateway/twingate-headless-client-gateway.sh -o gateway.sh
+curl -o tg-gateway.sh https://raw.githubusercontent.com/graybern/twingate/refs/heads/main/headless/gateway/twingate-headless-client-gateway.sh \
+  && chmod +x tg-gateway.sh
 ```
 
 2. **Run the script with required arguments:**
 
 ```bash
-sudo bash ./gateway.sh ./servicekey.json 192.168.1.0/24
+sudo ./tg-gateway.sh ./servicekey.json 192.168.1.0/24
 ```
 
 - `./servicekey.json`: Path to your saved Twingate service key file
