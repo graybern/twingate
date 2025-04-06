@@ -28,6 +28,15 @@ else
 fi
 
 # ============================================================
+# Optional Allowed IPs
+# ============================================================
+read -p "Do you want to allow specific IPs for routing and DNS? (yes/no) " ALLOW_SPECIFIC_IPS
+
+if [[ "$ALLOW_SPECIFIC_IPS" == "yes" ]]; then
+  read -p "Enter comma-separated list of allowed IPs (e.g., 192.168.1.100,192.168.1.101): " ALLOWED_IPS
+fi
+
+# ============================================================
 # Validate and set inputs
 # ============================================================
 
@@ -133,6 +142,20 @@ server=100.95.0.253
 server=100.95.0.254
 EOF
 
+# Configure dnsmasq for Allowed IPs
+if [[ "$ALLOW_SPECIFIC_IPS" == "yes" && -n "$ALLOWED_IPS" ]]; then
+  IFS=',' read -r -a ALLOWED_IP_ARRAY <<< "$ALLOWED_IPS"
+  
+  # Only provide DNS for the specified IPs
+  for ip in "${ALLOWED_IP_ARRAY[@]}"; do
+    echo "Limiting DNS access to IP: $ip"
+
+    # Add the DHCP and DNS options for each allowed IP
+    echo "dhcp-option=3,$ip" >> /etc/dnsmasq.d/twingate-gateway.conf  # Gateway for each IP
+    echo "dhcp-option=6,$ip" >> /etc/dnsmasq.d/twingate-gateway.conf  # DNS for each IP
+  done
+fi
+
 systemctl restart dnsmasq
 systemctl enable dnsmasq
 
@@ -147,6 +170,23 @@ iptables -A FORWARD -i "$LAN_INTERFACE" -o "$WAN_INTERFACE" -j ACCEPT
 iptables -A FORWARD -i "$LAN_INTERFACE" -o sdwan0 -j ACCEPT
 iptables -A FORWARD -i "$WAN_INTERFACE" -o "$LAN_INTERFACE" -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -A FORWARD -i sdwan0 -o "$LAN_INTERFACE" -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Configure iptables for Allowed IPs
+if [[ "$ALLOW_SPECIFIC_IPS" == "yes" && -n "$ALLOWED_IPS" ]]; then
+  IFS=',' read -r -a ALLOWED_IP_ARRAY <<< "$ALLOWED_IPS"
+  
+  for ip in "${ALLOWED_IP_ARRAY[@]}"; do
+    echo "Allowing IP $ip through the gateway..."
+
+    # Allow forwarding from specific IPs to the Twingate tunnel
+    iptables -A FORWARD -s "$ip" -o sdwan0 -j ACCEPT
+
+    # Allow incoming traffic on LAN interface from the allowed IPs
+    iptables -A INPUT -s "$ip" -i "$LAN_INTERFACE" -j ACCEPT
+  done
+else
+  echo "No specific IPs specified, allowing all traffic..."
+fi
 
 if [ "$PKG_MANAGER" = "dnf" ]; then
   iptables-save > /etc/sysconfig/iptables
