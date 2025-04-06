@@ -19,7 +19,7 @@
 # Display Help/Usage
 # ============================================================
 if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-  echo "Usage: sudo ./twingate-gateway.sh /path/to/twingate-service-key.json 10.0.0.0/24 [enable_dhcp] [dhcp_range] [dhcp_gateway] [dhcp_dns]"
+  echo "Usage: sudo ./twingate-gateway.sh /path/to/twingate-service-key.json 10.0.0.0/24 [enable_dhcp] [dhcp_range] [dhcp_gateway] [dhcp_dns]" # FUTURE - eth0 or wlan0 for interface that will be WAN vs LAN
   echo "  /path/to/twingate-service-key.json - Location of the Twingate service key file."
   echo "  10.0.0.0/24 - Local network subnet."
   echo "  enable_dhcp - Optional. yes or no (default: yes)."
@@ -93,6 +93,7 @@ fi
 # ============================================================
 systemctl stop systemd-resolved || true
 systemctl disable systemd-resolved || true
+sudo echo "nameserver $MAIN_NETWORK_INTERFACE_IP" >> /etc/resolv.conf # make sure /etc/resolv.conf exists for twingate to override (does not create one if it does not exist)
 
 # ============================================================
 # Install Twingate Client
@@ -103,21 +104,41 @@ systemctl start twingate
 systemctl enable twingate
 
 # ============================================================
+# Set eth0 to a static IP temporarily
+# ============================================================
+
+sudo ip addr flush dev eth0
+sudo ip addr add 192.168.100.1/24 dev eth0 # FUTURE - change to be set by the user if dhcp is enabled
+sudo ip link set eth0 up
+
+# ============================================================
 # Configure dnsmasq for DNS (and optional DHCP)
 # ============================================================
 mkdir -p /etc/dnsmasq.d
 
 cat <<EOF > /etc/dnsmasq.d/twingate-gateway.conf
+# Specify the interface for the DHCP server to listen on (eth0 for Ethernet)
 interface=eth0
+
+# Other settings
 #bind-interfaces
-listen-address=127.0.0.1,$MAIN_NETWORK_INTERFACE_IP
+listen-address=127.0.0.1,$MAIN_NETWORK_INTERFACE_IP,192.168.100.1 # listen on localhost, wlan0 & eth0
 no-resolv
+domain-needed
+bogus-priv
+
+# Set the DHCP range (adjust to your subnet)
+dhcp-range=192.168.100.100,192.168.100.150,12h
+
+# Set the Pi's IP as the default gateway and DNS server
+dhcp-option=3,192.168.100.1     # Default Gateway (RPi IP)
+dhcp-option=6,192.168.100.1     # DNS Server (RPi IP)
+
+# Specify the DNS resolvers (this can be Twingate or public DNS)
 server=100.95.0.251
 server=100.95.0.252
 server=100.95.0.253
 server=100.95.0.254
-domain-needed
-bogus-priv
 EOF
 
 if [ "$ENABLE_DHCP" = "yes" ]; then
