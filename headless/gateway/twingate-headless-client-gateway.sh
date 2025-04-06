@@ -23,9 +23,9 @@ if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
   echo "  /path/to/twingate-service-key.json - Location of the Twingate service key file."
   echo "  10.0.0.0/24 - Local network subnet."
   echo "  enable_dhcp - Optional. yes or no (default: yes)."
-  echo "  dhcp_range - Optional. Format: start,end,lease (default: 192.168.210.100,192.168.210.150,12h)"
-  echo "  dhcp_gateway - Optional. Default: 192.168.210.193"
-  echo "  dhcp_dns - Optional. Default: 192.168.210.193"
+  echo "  dhcp_range - Optional. Format: start,end,lease (default: 192.168.1.100,192.168.1.150,12h)"
+  echo "  dhcp_gateway - Optional. Default: 192.168.1.193"
+  echo "  dhcp_dns - Optional. Default: 192.168.1.193"
   exit 0
 fi
 
@@ -58,9 +58,9 @@ LOCAL_NETWORK_SUBNET="$2"
 
 # Optional arguments
 ENABLE_DHCP="${3:-yes}"
-DHCP_RANGE="${4:-192.168.210.100,192.168.210.150,12h}"
-DHCP_GATEWAY="${5:-192.168.210.193}"
-DHCP_DNS="${6:-192.168.210.193}"
+DHCP_RANGE="${4:-192.168.1.100,192.168.1.150,12h}"
+DHCP_GATEWAY="${5:-192.168.1.193}"
+DHCP_DNS="${6:-192.168.1.193}"
 
 MAIN_NETWORK_INTERFACE_IP=$(ip -4 addr show $(ip route show default | awk '/default/ {print $5}') | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
 
