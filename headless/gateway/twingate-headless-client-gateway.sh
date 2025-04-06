@@ -12,34 +12,30 @@
 # 3. The subnet of your local network.
 # 4. This script should be run as root or with sudo.
 
-# Example usage:
-# sudo ./twingate-gateway.sh /path/to/twingate-service-key.json 10.0.0.0/24 [enable_dhcp] [dhcp_range] [dhcp_gateway] [dhcp_dns]
+# ============================================================
+# Prompt user for interfaces
+# ============================================================
 
-# ============================================================
-# Display Help/Usage
-# ============================================================
-if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-  echo "Usage: sudo ./twingate-gateway.sh /path/to/twingate-service-key.json 10.0.0.0/24 [enable_dhcp] [dhcp_range] [dhcp_gateway] [dhcp_dns]" # FUTURE - eth0 or wlan0 for interface that will be WAN vs LAN
-  echo "  /path/to/twingate-service-key.json - Location of the Twingate service key file."
-  echo "  10.0.0.0/24 - Local network subnet."
-  echo "  enable_dhcp - Optional. yes or no (default: yes)."
-  echo "  dhcp_range - Optional. Format: start,end,lease (default: 192.168.1.100,192.168.1.150,12h)"
-  echo "  dhcp_gateway - Optional. Default: 192.168.1.193"
-  echo "  dhcp_dns - Optional. Default: 192.168.1.193"
-  exit 0
+read -p "What interface will be the WAN port (e.g., wlan0, eth0)? " WAN_INTERFACE
+read -p "Do you want to enable DHCP? (yes/no) " ENABLE_DHCP
+if [[ "$ENABLE_DHCP" == "yes" ]]; then
+  read -p "Which interface should DHCP be enabled on (e.g., eth0)? " LAN_INTERFACE
+  read -p "Enter DHCP range (e.g., 192.168.100.100,192.168.100.150,12h): " DHCP_RANGE
+  read -p "Enter DHCP gateway IP (e.g., 192.168.100.1): " DHCP_GATEWAY
+  read -p "Enter DHCP DNS IP (e.g., 192.168.100.1): " DHCP_DNS
+else
+  read -p "Which interface will act as LAN (e.g., eth0)? " LAN_INTERFACE
 fi
 
 # ============================================================
-# Check for Root/Sudo Privileges
+# Validate and set inputs
 # ============================================================
+
 if [ "$EUID" -ne 0 ]; then
   echo "Please run as root or with sudo."
   exit 1
 fi
 
-# ============================================================
-# Validate Input Arguments
-# ============================================================
 if [ -z "$1" ] || [ ! -f "$1" ]; then
   echo "Please provide a valid Twingate service key file as the first argument."
   exit 1
@@ -50,23 +46,14 @@ if [ -z "$2" ]; then
   echo "Please provide the local network subnet as the second argument (format: x.x.x.x/xx)."
   exit 1
 fi
-if ! echo "$2" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$'; then
-  echo "The local network subnet is not valid."
-  exit 1
-fi
 LOCAL_NETWORK_SUBNET="$2"
 
-# Optional arguments
-ENABLE_DHCP="${3:-yes}"
-DHCP_RANGE="${4:-192.168.1.100,192.168.1.150,12h}"
-DHCP_GATEWAY="${5:-192.168.1.193}"
-DHCP_DNS="${6:-192.168.1.193}"
-
-MAIN_NETWORK_INTERFACE_IP=$(ip -4 addr show $(ip route show default | awk '/default/ {print $5}') | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+MAIN_NETWORK_INTERFACE_IP=$(ip -4 addr show "$WAN_INTERFACE" | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
 
 # ============================================================
-# Identify Package Manager (apt-get or dnf)
+# Detect Package Manager
 # ============================================================
+
 if [ -x "$(command -v apt-get)" ]; then
   PKG_MANAGER="apt-get"
 elif [ -x "$(command -v dnf)" ]; then
@@ -77,9 +64,10 @@ else
 fi
 
 # ============================================================
-# Update Package Repositories & Install Required Packages
+# Install Required Packages
 # ============================================================
-if [ $PKG_MANAGER = "dnf" ]; then
+
+if [ "$PKG_MANAGER" = "dnf" ]; then
   $PKG_MANAGER -y update
   $PKG_MANAGER install -y dnsmasq curl iptables-services
   systemctl enable iptables && systemctl start iptables
@@ -89,74 +77,78 @@ else
 fi
 
 # ============================================================
-# Stop any services using port 53 (like systemd-resolved)
+# Stop services using port 53 (DNS)
 # ============================================================
+
 systemctl stop systemd-resolved || true
 systemctl disable systemd-resolved || true
-sudo echo "nameserver $MAIN_NETWORK_INTERFACE_IP" >> /etc/resolv.conf # make sure /etc/resolv.conf exists for twingate to override (does not create one if it does not exist)
+echo "nameserver $MAIN_NETWORK_INTERFACE_IP" > /etc/resolv.conf
 
 # ============================================================
-# Install Twingate Client
+# Install and configure Twingate client
 # ============================================================
+
 curl https://binaries.twingate.com/client/linux/install.sh | sudo bash
-sudo twingate setup --headless $TWINGATE_SERVICE_KEY_FILE
-systemctl start twingate
-systemctl enable twingate
+sudo twingate setup --headless "$TWINGATE_SERVICE_KEY_FILE"
+systemctl enable --now twingate
 
 # ============================================================
-# Set eth0 to a static IP temporarily
+# Configure LAN interface with static IP
 # ============================================================
 
-sudo ip addr flush dev eth0
-sudo ip addr add 192.168.100.1/24 dev eth0 # FUTURE - change to be set by the user if dhcp is enabled
-sudo ip link set eth0 up
+ip addr flush dev "$LAN_INTERFACE"
+ip addr add "$DHCP_GATEWAY"/24 dev "$LAN_INTERFACE"
+ip link set "$LAN_INTERFACE" up
 
 # ============================================================
-# Configure dnsmasq for DNS (and optional DHCP)
+# Configure dnsmasq
 # ============================================================
+
 mkdir -p /etc/dnsmasq.d
-
 cat <<EOF > /etc/dnsmasq.d/twingate-gateway.conf
-# Specify the interface for the DHCP server to listen on (eth0 for Ethernet)
-interface=eth0
+# Specify the interface for the DHCP server
+interface=$LAN_INTERFACE
 
-# Other settings
-#bind-interfaces
-listen-address=127.0.0.1,$MAIN_NETWORK_INTERFACE_IP,192.168.100.1 # listen on localhost, wlan0 & eth0
+listen-address=127.0.0.1,$MAIN_NETWORK_INTERFACE_IP,$DHCP_GATEWAY
 no-resolv
 domain-needed
 bogus-priv
 
-# Set the DHCP range (adjust to your subnet)
-dhcp-range=192.168.100.100,192.168.100.150,12h
+# DHCP settings
+EOF
 
-# Set the Pi's IP as the default gateway and DNS server
-dhcp-option=3,192.168.100.1     # Default Gateway (RPi IP)
-dhcp-option=6,192.168.100.1     # DNS Server (RPi IP)
+if [[ "$ENABLE_DHCP" == "yes" ]]; then
+cat <<EOF >> /etc/dnsmasq.d/twingate-gateway.conf
+dhcp-range=$DHCP_RANGE
+dhcp-option=3,$DHCP_GATEWAY
+dhcp-option=6,$DHCP_DNS
+EOF
+fi
 
-# Specify the DNS resolvers (this can be Twingate or public DNS)
+# DNS via Twingate
+cat <<EOF >> /etc/dnsmasq.d/twingate-gateway.conf
 server=100.95.0.251
 server=100.95.0.252
 server=100.95.0.253
 server=100.95.0.254
 EOF
 
-if [ "$ENABLE_DHCP" = "yes" ]; then
-cat <<EOF >> /etc/dnsmasq.d/twingate-gateway.conf
-dhcp-range=$DHCP_RANGE
-dhcp-option=3,$DHCP_GATEWAY  # Gateway
-dhcp-option=6,$DHCP_DNS      # DNS
-EOF
-fi
-
 systemctl restart dnsmasq
 systemctl enable dnsmasq
 
 # ============================================================
-# Configure NAT with iptables
+# Enable NAT
 # ============================================================
-iptables -t nat -A POSTROUTING -s $LOCAL_NETWORK_SUBNET -o sdwan0 -j MASQUERADE
-if [ $PKG_MANAGER = "dnf" ]; then
+
+iptables -t nat -A POSTROUTING -s "$LOCAL_NETWORK_SUBNET" -o sdwan0 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s "$LOCAL_NETWORK_SUBNET" -o "$WAN_INTERFACE" -j MASQUERADE
+
+iptables -A FORWARD -i "$LAN_INTERFACE" -o "$WAN_INTERFACE" -j ACCEPT
+iptables -A FORWARD -i "$LAN_INTERFACE" -o sdwan0 -j ACCEPT
+iptables -A FORWARD -i "$WAN_INTERFACE" -o "$LAN_INTERFACE" -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -i sdwan0 -o "$LAN_INTERFACE" -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+if [ "$PKG_MANAGER" = "dnf" ]; then
   iptables-save > /etc/sysconfig/iptables
 else
   iptables-save > /etc/iptables/rules.v4
@@ -166,12 +158,13 @@ fi
 # ============================================================
 # Enable IPv4 Forwarding
 # ============================================================
+
 echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 sysctl -p
 
 # ============================================================
-# Script Completion
+# Done
 # ============================================================
-echo "Twingate Internet Gateway configuration is complete."
+
+echo "✅ Twingate Gateway setup is complete."
 echo "dnsmasq configuration saved to /etc/dnsmasq.d/twingate-gateway.conf"
-cat /etc/dnsmasq.d/twingate-gateway.conf
