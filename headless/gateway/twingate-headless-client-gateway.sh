@@ -109,7 +109,7 @@ mkdir -p /etc/dnsmasq.d
 
 cat <<EOF > /etc/dnsmasq.d/twingate-gateway.conf
 interface=eth0
-bind-interfaces
+#bind-interfaces
 listen-address=127.0.0.1,$MAIN_NETWORK_INTERFACE_IP
 no-resolv
 server=100.95.0.251
